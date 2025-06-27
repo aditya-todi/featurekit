@@ -21,6 +21,8 @@ from .base_plots import (
     _plot_boxplot_categorical,
     _plot_violinplot_categorical,
     _plot_mean_barplot_with_ci,
+    _plot_correspondence_categorical,
+    _plot_contingency_heatmap,
 )
 
 
@@ -320,7 +322,6 @@ class UnivariateTargetVariationPlotter(object):
         nrows = n
         figsize = (20, 6 * nrows)
         y = self.df[self.target]
-
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
         )
@@ -329,9 +330,7 @@ class UnivariateTargetVariationPlotter(object):
             grouped = self.df[[feature, self.target]].copy()
             grouped[feature] = grouped[feature].fillna("Missing")
             grouped = grouped.groupby(feature)
-            # cmap = plt.colormaps[random.choice(self.cmaps)]
             title = f"{feature} v/s {self.target}"
-
             _plot_boxplot_categorical(
                 grouped,
                 self.target,
@@ -387,14 +386,99 @@ class UnivariateTargetVariationPlotter(object):
         )
         self._plot_numeric_target_categorical_feature_relationships(confidence_interval)
 
-    def _plot_categorical_target_relationships(self) -> None:
+    def _plot_categorical_target_numerical_feature_relationships(
+        self, confidence_interval: float | None = None
+    ):
+        if not self.numerical_features:
+            print("No numerical features to plot")
+            return
+
+        n = len(self.numerical_features)
+        ncols = 3
+        nrows = n
+        figsize = (20, 6 * nrows)
+        y = self.df[self.target]
+        fig, axs = plt.subplots(
+            nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
+        )
+
+        for i, feature in enumerate(self.numerical_features):
+            x, y = utils._drop_simultaneous_na(self.df[feature], self.df[self.target])
+            grouped = self.df[[self.target, feature]].dropna().copy()
+            # grouped[feature] = grouped[feature].fillna("Missing")
+            grouped = grouped.groupby(self.target)
+            title = f"{feature} v/s {self.target}"
+            _plot_boxplot_categorical(
+                grouped,
+                feature,
+                axs[0] if nrows == 1 else axs[i][0],
+                title=title,
+            )
+            _plot_violinplot_categorical(
+                grouped,
+                feature,
+                axs[1] if nrows == 1 else axs[i][1],
+                title=title,
+            )
+            _plot_mean_barplot_with_ci(
+                grouped,
+                feature,
+                axs[2] if nrows == 1 else axs[i][2],
+                title=title,
+                confidence_interval=confidence_interval,
+            )
+
+        plt.show()
+
+    def _plot_categorical_target_categorical_feature_relationships(
+        self, random_state: int
+    ):
+        if not self.categorical_features:
+            print("No categorical features to plot")
+            return
+
+        n = len(self.categorical_features)
+        ncols = 2
+        nrows = n
+        figsize = (16, 4 * nrows)
+        y = self.df[self.target]
+        fig, axs = plt.subplots(
+            nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
+        )
+
+        for i, feature in enumerate(self.categorical_features):
+            _plot_contingency_heatmap(
+                self.df,
+                feature,
+                self.target,
+                fig,
+                axs[0] if nrows == 1 else axs[i][0],
+            )
+            _plot_correspondence_categorical(
+                self.df,
+                feature,
+                self.target,
+                axs[1] if nrows == 1 else axs[i][1],
+                random_state=random_state,
+                plot_names=True,
+            )
+
+        plt.show()
+
+    def _plot_categorical_target_relationships(
+        self, random_state: int, confidence_interval: float | None = None
+    ) -> None:
         """
         Plots how each feature relates to the numerical target.
         """
-        pass
+        self._plot_categorical_target_numerical_feature_relationships(
+            confidence_interval
+        )
+        self._plot_categorical_target_categorical_feature_relationships(random_state)
 
     def plot(
         self,
+        random_state: int,
         confidence_interval: float | None = None,
         bootstrap_max_iterations: int | None = None,
         bootstrap_regression_sample_limit: int | None = None,
@@ -415,4 +499,6 @@ class UnivariateTargetVariationPlotter(object):
                 logy,
             )
         else:
-            self._plot_categorical_target_relationships
+            self._plot_categorical_target_relationships(
+                random_state, confidence_interval
+            )

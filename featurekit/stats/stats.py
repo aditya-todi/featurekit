@@ -1,7 +1,8 @@
 import typing
 
-import scipy
 import numpy as np
+import scipy
+import prince
 
 import pandas as pd
 from pandas.core.groupby.generic import DataFrameGroupBy
@@ -25,7 +26,7 @@ def linear_regression_with_ci(
     bootstrap_max_iterations: int | None = None,
     bootstrap_regression_sample_limit: int | None = None,
     logy: bool = False,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     y_transformed = None
 
     if logy:
@@ -69,7 +70,7 @@ def linear_regression_with_ci(
         resampled_preds, (1 + confidence_interval) * 100 / 2, axis=0
     )
 
-    return y_vals, lower_ci, upper_ci
+    return y_vals, lower_ci, upper_ci, confidence_interval
 
 
 def _tricube_weight_kernel(distances: np.ndarray) -> np.ndarray:
@@ -93,7 +94,7 @@ def linear_regression_with_lowess(
     lowess_frac: float | None = None,
     lowess_kernel: typing.Literal["tricube", "gaussian"] | None = None,
     lowess_regression_sample_limit: int | None = None,
-) -> np.ndarray:
+) -> tuple[np.ndarray, float]:
     if lowess_kernel not in ["tricube", "gaussian"]:
         raise ValueError(
             f"unknown weight kernel: '{lowess_kernel}', valid values: 'tricube', 'gaussian'"
@@ -134,7 +135,7 @@ def linear_regression_with_lowess(
         )
         y_vals[i] = coeffs[0] + coeffs[1] * x_v
 
-    return y_vals
+    return y_vals, lowess_frac
 
 
 @utils.enrich_args_from_config("confidence_interval", config=stats_config)
@@ -143,7 +144,7 @@ def target_mean_with_ci(
     target: str,
     confidence_interval: float | None = None,
     sort_means: bool = True,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[pd.Series, np.ndarray, float]:
     category_counts = grouped[target].count().clip(lower=2)
     t_critical = scipy.stats.t.ppf(
         (1 + confidence_interval) / 2, df=category_counts - 1
@@ -155,6 +156,26 @@ def target_mean_with_ci(
 
     if sort_means:
         sorted_ids = np.argsort(target_means)[::-1]
-        return target_means.iloc[sorted_ids], target_mean_errs[sorted_ids]
+        return target_means.iloc[sorted_ids], target_mean_errs[sorted_ids], confidence_interval
 
-    return target_means, target_mean_errs
+    return target_means, target_mean_errs, confidence_interval
+
+
+def correspondance_analysis(
+    x1: pd.Series,
+    x2: pd.Series,
+    ca_out_componenets: int = 2,
+    ca_iter: int = 10,
+    random_state: int = 42,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    df = pd.crosstab(index=x1, columns=x2)
+    ca = prince.CA(
+        n_components=ca_out_componenets,
+        n_iter=ca_iter,
+        copy=True,
+        check_input=True,
+        engine="sklearn",
+        random_state=random_state,
+    )
+    ca.fit(df)
+    return ca.row_coordinates(df), ca.column_coordinates(df)

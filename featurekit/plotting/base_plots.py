@@ -1,4 +1,4 @@
-# from typing import Any, Callable, Literal
+import random
 import typing
 
 import scipy
@@ -11,12 +11,14 @@ from pandas.core.groupby.generic import DataFrameGroupBy
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
+from matplotlib.colors import Normalize
 
 import featurekit.utils as utils
 from featurekit.stats import (
     linear_regression_with_ci,
     linear_regression_with_lowess,
     target_mean_with_ci,
+    correspondance_analysis,
 )
 from .config import plotting_config
 
@@ -110,7 +112,11 @@ def _plot_boxplot(
     ax.legend(
         handles=[
             Patch(color=primary_color, label=f"Median: {x.median():.2f}"),
-        ]
+        ],
+        title="Medians",
+        loc="upper right",
+        fontsize="x-small",
+        title_fontsize="x-small",
     )
 
 
@@ -206,9 +212,6 @@ def _plot_donut(
     "line_color",
     "text_color",
     "alpha",
-    "confidence_interval",
-    "bootstrap_max_iterations",
-    "bootstrap_regression_sample_limit",
     config=plotting_config,
 )
 def _plot_scatter_with_regression(
@@ -226,7 +229,7 @@ def _plot_scatter_with_regression(
     logy: bool = False,
 ):
     x_vals = np.linspace(x.min(), x.max(), 100)
-    y_vals, lower_ci, upper_ci = linear_regression_with_ci(
+    y_vals, lower_ci, upper_ci, confidence_interval = linear_regression_with_ci(
         x,
         y,
         x_vals=x_vals,
@@ -257,9 +260,6 @@ def _plot_scatter_with_regression(
     "line_color",
     "text_color",
     "alpha",
-    "lowess_frac",
-    "lowess_kernel",
-    "lowess_regression_sample_limit",
     config=plotting_config,
 )
 def _plot_scatter_with_lowess(
@@ -276,7 +276,7 @@ def _plot_scatter_with_lowess(
     lowess_regression_sample_limit: int | None = None,
 ) -> None:
     x_vals = np.linspace(x.min(), x.max(), 100)
-    y_vals = linear_regression_with_lowess(
+    y_vals, lowess_frac = linear_regression_with_lowess(
         x,
         y,
         x_vals=x_vals,
@@ -362,7 +362,6 @@ def _plot_violinplot_categorical(
     "point_color",
     "line_color",
     "text_color",
-    "confidence_interval",
     config=plotting_config,
 )
 def _plot_mean_barplot_with_ci(
@@ -375,7 +374,7 @@ def _plot_mean_barplot_with_ci(
     text_color: typing.Any = None,
     confidence_interval: float | None = None,
 ) -> None:
-    target_means, target_mean_errs = target_mean_with_ci(
+    target_means, target_mean_errs, confidence_interval = target_mean_with_ci(
         grouped,
         target,
         confidence_interval=confidence_interval,
@@ -417,4 +416,112 @@ def _plot_mean_barplot_with_ci(
         loc="upper right",
         fontsize="x-small",
         title_fontsize="x-small",
+    )
+
+
+def _plot_text(coords: pd.DataFrame, ax: plt.Axes, color: typing.Any):
+    if len(coords.columns) < 2:
+        for label, x in coords.iterrows():
+            ax.text(x, 0, f"{label}", ha="center", va="center", fontsize=9, color=color)
+    else:
+        for label, (x, y) in coords.iterrows():
+            ax.text(x, y, f"{label}", ha="center", va="center", fontsize=9, color=color)
+
+
+@utils.enrich_args_from_config("text_color", config=plotting_config)
+def _plot_correspondence_categorical(
+    df: pd.DataFrame,
+    f1: str,
+    f2: str,
+    ax: plt.Axes,
+    random_state: int,
+    text_color: typing.Any = None,
+    plot_names: bool = False,
+):
+    cmap = plt.colormaps["Dark2"]
+    c1, c2 = cmap(random.random() / 2), cmap((random.random() + 1) / 2)
+    x1, x2 = df[f1], df[f2]
+    x1_coords, x2_coords = correspondance_analysis(x1, x2, random_state=random_state)
+
+    ax.set_title(
+        f"'{f1} v/s '{f2}'' Correspondence Analysis",
+        color=text_color,
+    )
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+    ax.legend(
+        handles=[Patch(color=c1, label=f1), Patch(color=c2, label=f2)],
+        loc="upper right",
+        fontsize="x-small",
+    )
+
+    x_range = max(
+        abs(min(x1_coords[0].min(), x2_coords[0].min())),
+        abs(max(x1_coords[0].max(), x2_coords[0].max())),
+        1,
+    )
+    ax.axhline(0, lw=0.5, color="grey")
+    ax.axvline(0, lw=0.5, color="grey")
+    ax.set_xlim(left=-1.5 * x_range, right=1.5 * x_range)
+    if len(x1_coords.columns) > 1:
+        y_range = max(
+            abs(min(x1_coords[0].min(), x2_coords[0].min())),
+            abs(max(x1_coords[0].max(), x2_coords[0].max())),
+            1,
+        )
+        ax.set_ylim(bottom=-1.5 * y_range, top=1.5 * y_range)
+    else:
+        ax.set_ylim(bottom=-1, top=1)
+
+    if plot_names:
+        _plot_text(x1_coords, ax, c1)
+        _plot_text(x2_coords, ax, c2)
+    else:
+        ax.scatter(x2_coords[0], x2_coords[1], color=c2)
+        ax.scatter(x1_coords[0], x1_coords[1], color=c1)
+
+
+@utils.enrich_args_from_config("text_color", config=plotting_config)
+def _plot_contingency_heatmap(
+    df: pd.DataFrame,
+    f1: str,
+    f2: str,
+    fig: typing.Any,
+    ax: plt.Axes,
+    text_color: typing.Any = None,
+):
+    x1, x2 = df[f1].fillna(value="Missing"), df[f2].fillna(value="Missing")
+    cross_tab_data = pd.crosstab(index=x1, columns=x2)
+
+    im = ax.imshow(
+        cross_tab_data / len(x1),
+        cmap="Greens",
+        interpolation="nearest",
+        norm=Normalize(vmin=0, vmax=1),
+    )
+
+    cbar = fig.colorbar(im, ax=ax, shrink=0.4)
+    cbar.set_label("Ratio of Total")
+
+    xlabels = cross_tab_data.columns
+    ylabels = cross_tab_data.index
+
+    for i in range(len(ylabels)):
+        for j in range(len(xlabels)):
+            ax.text(
+                j,
+                i,
+                f"{cross_tab_data.values[i, j]}",
+                ha="center",
+                va="center",
+                # color=("black" if abs(cross_tab_data.values[i, j]) < 0.7 else "white"),
+                color="black",
+                fontsize=9,
+            )
+    ax.set_xticks(np.arange(len(xlabels)))
+    ax.set_yticks(np.arange(len(ylabels)))
+    ax.set_xticklabels(xlabels, rotation=90, ha="right")
+    ax.set_yticklabels(ylabels)
+    ax.set_title(
+        f"'{f1} v/s '{f2}'' Contingency Heatmap",
+        color=text_color,
     )
