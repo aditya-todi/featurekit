@@ -13,6 +13,11 @@ from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 
 import featurekit.utils as utils
+from featurekit.stats import (
+    linear_regression_with_ci,
+    linear_regression_with_lowess,
+    target_mean_with_ci,
+)
 from .config import plotting_config
 
 
@@ -202,7 +207,7 @@ def _plot_donut(
     "text_color",
     "alpha",
     "confidence_interval",
-    "bootstrap_iter",
+    "bootstrap_max_iterations",
     "bootstrap_regression_sample_limit",
     config=plotting_config,
 )
@@ -216,42 +221,20 @@ def _plot_scatter_with_regression(
     text_color: typing.Any = None,
     alpha: float | None = None,
     confidence_interval: float | None = None,
-    bootstrap_iter: int | None = None,
+    bootstrap_max_iterations: int | None = None,
     bootstrap_regression_sample_limit: int | None = None,
-    restrict_y: bool = False,
+    logy: bool = False,
 ):
-    y_min, y_max = y.min() - plotting_config.EPS, y.max() + plotting_config.EPS
-    y_transformed = y
-    if restrict_y:
-        y_transformed = np.log((y - y_min) / (y_max - y))
-
-    pf = np.polynomial.Polynomial.fit(x=x, y=y_transformed, deg=1)
     x_vals = np.linspace(x.min(), x.max(), 100)
-    y_vals = pf(x_vals)
-    bootstrap_preds = np.zeros((bootstrap_iter, len(x_vals)))
-
-    for i in range(bootstrap_iter):
-        bootstrap_ids = np.random.choice(
-            len(x),
-            size=min(bootstrap_regression_sample_limit, len(x)),
-            replace=True,
-        )
-        bootstrap_x = x.iloc[bootstrap_ids]
-        bootstrap_y = y_transformed.iloc[bootstrap_ids]
-        bootstrap_pf = np.polynomial.Polynomial.fit(x=bootstrap_x, y=bootstrap_y, deg=1)
-        bootstrap_preds[i] = bootstrap_pf(x_vals)
-
-    if restrict_y:
-        bootstrap_preds = ((y_max - y_min) / (1 + np.exp(-bootstrap_preds))) + y_min
-        y_vals = ((y_max - y_min) / (1 + np.exp(-y_vals))) + y_min
-
-    lower_ci = np.percentile(
-        bootstrap_preds, (1 - confidence_interval) * 100 / 2, axis=0
+    y_vals, lower_ci, upper_ci = linear_regression_with_ci(
+        x,
+        y,
+        x_vals=x_vals,
+        confidence_interval=confidence_interval,
+        bootstrap_max_iterations=bootstrap_max_iterations,
+        bootstrap_regression_sample_limit=bootstrap_regression_sample_limit,
+        logy=logy,
     )
-    upper_ci = np.percentile(
-        bootstrap_preds, (1 + confidence_interval) * 100 / 2, axis=0
-    )
-
     ax.scatter(x, y, s=6, color=point_color, alpha=alpha)
     ax.plot(x_vals, y_vals, color=line_color, linewidth=2)
     ax.fill_between(
@@ -267,14 +250,6 @@ def _plot_scatter_with_regression(
         color=text_color,
     )
     ax.grid(axis="y", linestyle="--", alpha=0.3)
-
-
-def _tricube_weight_kernel(distances: np.ndarray) -> np.ndarray:
-    return (1 - (np.clip(distances) ** 3)) ** 3
-
-
-def _gaussian_weight_kernel(distances: np.ndarray) -> np.ndarray:
-    return np.exp(-0.5 * (distances**2))
 
 
 @utils.enrich_args_from_config(
@@ -300,46 +275,15 @@ def _plot_scatter_with_lowess(
     lowess_kernel: typing.Literal["tricube", "gaussian"] | None = None,
     lowess_regression_sample_limit: int | None = None,
 ) -> None:
-    if lowess_kernel not in ["tricube", "gaussian"]:
-        raise ValueError(
-            f"unknown weight kernel: '{lowess_kernel}', valid values: 'tricube', 'gaussian'"
-        )
-
-    x_trunc, y_trunc = utils._truncate_simulatneous(
-        x, y, lowess_regression_sample_limit
+    x_vals = np.linspace(x.min(), x.max(), 100)
+    y_vals = linear_regression_with_lowess(
+        x,
+        y,
+        x_vals=x_vals,
+        lowess_frac=lowess_frac,
+        lowess_kernel=lowess_kernel,
+        lowess_regression_sample_limit=lowess_regression_sample_limit,
     )
-    n = len(x_trunc)
-    sorted_ilocs = np.argsort(x_trunc)
-    x_sorted = np.array(x_trunc.iloc[sorted_ilocs])
-    y_sorted = np.array(y_trunc.iloc[sorted_ilocs])
-
-    window_size = max(5, int(lowess_frac * n))
-    _weight_kernel_func = (
-        _gaussian_weight_kernel
-        if lowess_kernel == "gaussian"
-        else _tricube_weight_kernel
-    )
-
-    x_vals = np.linspace(min(x), max(x), 100)
-    y_vals = np.zeros_like(x_vals)
-
-    for i, x_v in enumerate(x_vals):
-        distances = np.abs(x_v - x_sorted)
-        window_x_ids = np.argsort(distances)[:window_size]
-        window_distances = distances[window_x_ids]
-        window_distances = window_distances / max(window_distances.max(), 1)
-
-        x_nearest = x_sorted[window_x_ids]
-        y_nearest = y_sorted[window_x_ids]
-        x_nearest = np.vstack((np.ones_like(x_nearest), x_nearest)).T
-        weights = _weight_kernel_func(window_distances)
-
-        x_nearest_weighted_t = (x_nearest * weights.reshape(-1, 1)).T
-        coeffs = (np.linalg.pinv(x_nearest_weighted_t @ x_nearest)) @ (
-            x_nearest_weighted_t @ y_nearest
-        )
-        y_vals[i] = coeffs[0] + coeffs[1] * x_v
-
     ax.scatter(x, y, s=6, color=point_color, alpha=alpha)
     ax.plot(
         x_vals,
@@ -431,28 +375,22 @@ def _plot_mean_barplot_with_ci(
     text_color: typing.Any = None,
     confidence_interval: float | None = None,
 ) -> None:
-    category_counts = grouped[target].count().clip(lower=2)
-    t_stars = scipy.stats.t.ppf((1 + confidence_interval) / 2, df=category_counts - 1)
-    target_means = grouped[target].mean()
-    target_mean_errs = np.array(
-        t_stars * (grouped[target].std() / np.sqrt(category_counts))
+    target_means, target_mean_errs = target_mean_with_ci(
+        grouped,
+        target,
+        confidence_interval=confidence_interval,
+        sort_means=True,
     )
-
-    sorted_ids = np.argsort(target_means)[::-1]
-    target_means_sorted = target_means.iloc[sorted_ids]
-    target_mean_errs_sorted = target_mean_errs[sorted_ids]
-
     ticks = np.arange(1, len(grouped) + 1)
-    labels = target_means_sorted.index.astype(str)
+    labels = target_means.index.astype(str)
     mean_handles = [
         Patch(color="none", label=f"{l}: {m}")
-        for l, m in zip(labels, target_means_sorted.values)
+        for l, m in zip(labels, target_means.values)
     ]
-
     ax.errorbar(
         ticks,
-        target_means_sorted.values,
-        target_mean_errs_sorted,
+        target_means.values,
+        target_mean_errs,
         ecolor=line_color,
         elinewidth=1,
         capsize=3,

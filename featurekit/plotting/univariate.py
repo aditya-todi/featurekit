@@ -262,11 +262,11 @@ class UnivariateTargetVariationPlotter(object):
     def _plot_numeric_target_numeric_feature_relationships(
         self,
         confidence_interval: float | None = None,
-        bootstrap_iter: int | None = None,
+        bootstrap_max_iterations: int | None = None,
         bootstrap_regression_sample_limit: int | None = None,
         lowess_frac: float | None = None,
         lowess_regression_sample_limit: int | None = None,
-        restrict_y: bool = False,
+        logy: bool = False,
     ) -> None:
         if not self.numerical_features:
             print("No numerical features to plot")
@@ -289,9 +289,9 @@ class UnivariateTargetVariationPlotter(object):
                 axs[0] if nrows == 1 else axs[i][0],
                 title=f"{feature} v/s {self.target}",
                 confidence_interval=confidence_interval,
-                bootstrap_iter=bootstrap_iter,
+                bootstrap_max_iterations=bootstrap_max_iterations,
                 bootstrap_regression_sample_limit=bootstrap_regression_sample_limit,
-                restrict_y=restrict_y,
+                logy=logy,
             )
             _plot_scatter_with_lowess(
                 x,
@@ -357,11 +357,11 @@ class UnivariateTargetVariationPlotter(object):
     def _plot_numeric_target_relationships(
         self,
         confidence_interval: float | None = None,
-        bootstrap_iter: int | None = None,
+        bootstrap_max_iterations: int | None = None,
         bootstrap_regression_sample_limit: int | None = None,
         lowess_frac: float | None = None,
         lowess_regression_sample_limit: int | None = None,
-        restrict_y: bool = False,
+        logy: bool = False,
     ) -> None:
         """
         Plots how each feature relates to the numerical target.
@@ -379,11 +379,11 @@ class UnivariateTargetVariationPlotter(object):
         """
         self._plot_numeric_target_numeric_feature_relationships(
             confidence_interval,
-            bootstrap_iter,
+            bootstrap_max_iterations,
             bootstrap_regression_sample_limit,
             lowess_frac,
             lowess_regression_sample_limit,
-            restrict_y,
+            logy,
         )
         self._plot_numeric_target_categorical_feature_relationships(confidence_interval)
 
@@ -396,11 +396,11 @@ class UnivariateTargetVariationPlotter(object):
     def plot(
         self,
         confidence_interval: float | None = None,
-        bootstrap_iter: int | None = None,
+        bootstrap_max_iterations: int | None = None,
         bootstrap_regression_sample_limit: int | None = None,
         lowess_frac: float | None = None,
         lowess_regression_sample_limit: int | None = None,
-        restrict_y: bool = False,
+        logy: bool = False,
     ) -> None:
         """
         Wrapper method to plot bivariate visualizations based on target type.
@@ -408,11 +408,11 @@ class UnivariateTargetVariationPlotter(object):
         if self.target_type == "regression":
             self._plot_numeric_target_relationships(
                 confidence_interval,
-                bootstrap_iter,
+                bootstrap_max_iterations,
                 bootstrap_regression_sample_limit,
                 lowess_frac,
                 lowess_regression_sample_limit,
-                restrict_y,
+                logy,
             )
         else:
             self._plot_categorical_target_relationships
