@@ -12,8 +12,10 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from matplotlib.lines import Line2D
 from matplotlib.colors import Normalize
+from matplotlib.tri import Triangulation
 
 import featurekit.utils as utils
+import featurekit.types as custom_types
 from featurekit.stats import (
     linear_regression_with_ci,
     linear_regression_with_lowess,
@@ -58,13 +60,18 @@ def _plot_kde(
 
 
 @utils.enrich_args_from_config(
-    "bar_color", "line_color", "text_color", "alpha", config=plotting_config
+    "bins",
+    "bar_color",
+    "line_color",
+    "text_color",
+    "alpha",
+    config=plotting_config,
 )
 def _plot_hist(
     x: pd.Series,
     ax: plt.Axes,
-    bins: int,
     title: str,
+    bins: int | None = None,
     bar_color: typing.Any = None,
     line_color: typing.Any = None,
     text_color: typing.Any = None,
@@ -228,17 +235,18 @@ def _plot_scatter_with_regression(
     bootstrap_regression_sample_limit: int | None = None,
     logy: bool = False,
 ):
-    x_vals = np.linspace(x.min(), x.max(), 100)
-    y_vals, lower_ci, upper_ci, confidence_interval = linear_regression_with_ci(
+    x_vals, y_vals, lower_ci, upper_ci, confidence_interval = linear_regression_with_ci(
         x,
         y,
-        x_vals=x_vals,
         confidence_interval=confidence_interval,
         bootstrap_max_iterations=bootstrap_max_iterations,
         bootstrap_regression_sample_limit=bootstrap_regression_sample_limit,
         logy=logy,
     )
-    ax.scatter(x, y, s=6, color=point_color, alpha=alpha)
+    x_trunc, y_trunc = utils._truncate_simulatneous(
+        x, y, plotting_config.scatter_plot_max_samples
+    )
+    ax.scatter(x_trunc, y_trunc, s=6, color=point_color, alpha=alpha)
     ax.plot(x_vals, y_vals, color=line_color, linewidth=2)
     ax.fill_between(
         x_vals,
@@ -275,16 +283,17 @@ def _plot_scatter_with_lowess(
     lowess_kernel: typing.Literal["tricube", "gaussian"] | None = None,
     lowess_regression_sample_limit: int | None = None,
 ) -> None:
-    x_vals = np.linspace(x.min(), x.max(), 100)
-    y_vals, lowess_frac = linear_regression_with_lowess(
+    x_vals, y_vals, lowess_frac = linear_regression_with_lowess(
         x,
         y,
-        x_vals=x_vals,
         lowess_frac=lowess_frac,
         lowess_kernel=lowess_kernel,
         lowess_regression_sample_limit=lowess_regression_sample_limit,
     )
-    ax.scatter(x, y, s=6, color=point_color, alpha=alpha)
+    x_trunc, y_trunc = utils._truncate_simulatneous(
+        x, y, plotting_config.scatter_plot_max_samples
+    )
+    ax.scatter(x_trunc, y_trunc, s=6, color=point_color, alpha=alpha)
     ax.plot(
         x_vals,
         y_vals,
@@ -364,7 +373,7 @@ def _plot_violinplot_categorical(
     "text_color",
     config=plotting_config,
 )
-def _plot_mean_barplot_with_ci(
+def _plot_target_mean_with_ci(
     grouped: DataFrameGroupBy,
     target: str,
     ax: plt.Axes,
@@ -438,13 +447,13 @@ def _plot_correspondence_categorical(
     text_color: typing.Any = None,
     plot_names: bool = False,
 ):
-    cmap = plt.colormaps["Dark2"]
+    cmap = plt.colormaps[f"Dark2"]
     c1, c2 = cmap(random.random() / 2), cmap((random.random() + 1) / 2)
     x1, x2 = df[f1], df[f2]
     x1_coords, x2_coords = correspondance_analysis(x1, x2, random_state=random_state)
 
     ax.set_title(
-        f"'{f1} v/s '{f2}'' Correspondence Analysis",
+        f"'{f1} v/s {f2}' Correspondence Analysis",
         color=text_color,
     )
     ax.grid(axis="y", linestyle="--", alpha=0.3)
@@ -485,7 +494,7 @@ def _plot_contingency_heatmap(
     df: pd.DataFrame,
     f1: str,
     f2: str,
-    fig: typing.Any,
+    fig: plt.Figure,
     ax: plt.Axes,
     text_color: typing.Any = None,
 ):
@@ -513,15 +522,240 @@ def _plot_contingency_heatmap(
                 f"{cross_tab_data.values[i, j]}",
                 ha="center",
                 va="center",
-                # color=("black" if abs(cross_tab_data.values[i, j]) < 0.7 else "white"),
-                color="black",
+                color=("black" if abs(cross_tab_data.values[i, j]) < 0.7 else "white"),
                 fontsize=9,
             )
     ax.set_xticks(np.arange(len(xlabels)))
     ax.set_yticks(np.arange(len(ylabels)))
     ax.set_xticklabels(xlabels, rotation=90, ha="right")
     ax.set_yticklabels(ylabels)
+    ax.set_ylabel(f1)
     ax.set_title(
-        f"'{f1} v/s '{f2}'' Contingency Heatmap",
+        f"'{f1} v/s {f2}' Contingency Heatmap",
         color=text_color,
     )
+
+
+@utils.enrich_args_from_config("text_color", "alpha", config=plotting_config)
+def _plot_scatter_2d(
+    df: pd.DataFrame,
+    f1: str,
+    f2: str,
+    target: str,
+    fig: plt.Figure,
+    ax: plt.Axes,
+    cmap: typing.Union[str, plt.Colormap],
+    text_color: typing.Any = None,
+    alpha: float | None = None,
+):
+    norm = Normalize(vmin=df[target].min(), vmax=df[target].max())
+    df = utils._truncate_df(df, plotting_config.scatter_plot_max_samples)
+
+    sc = ax.scatter(
+        df[f1],
+        df[f2],
+        c=df[target],
+        cmap=cmap,
+        s=12,
+        norm=norm,
+    )
+
+    cbar = fig.colorbar(sc, ax=ax, shrink=0.4)
+    cbar.set_label(f"'{target}'")
+
+    ax.set_xlabel(f1)
+    ax.set_ylabel(f2)
+    ax.set_title(
+        f"'{f1} vs {f2}' Scatter Plot (Target: {target})",
+        color=text_color,
+    )
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+
+@utils.enrich_args_from_config("text_color", "alpha", config=plotting_config)
+def _plot_hexbin_2d(
+    df: pd.DataFrame,
+    f1: str,
+    f2: str,
+    target: str,
+    ax: plt.Axes,
+    cmap: typing.Union[str, plt.Colormap],
+    text_color: typing.Any = None,
+    alpha: float | None = None,
+):
+    ax.hexbin(x=df[f1], y=df[f2], C=df[target], cmap=cmap, gridsize=30)
+    ax.set_xlabel(f1)
+    ax.set_ylabel(f2)
+    ax.set_title(
+        f"'{f1} vs {f2}' Hexbin Plot (Target: {target})",
+        color=text_color,
+    )
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+
+@utils.enrich_args_from_config("text_color", "alpha", config=plotting_config)
+def _plot_contour(
+    df: pd.DataFrame,
+    f1: str,
+    f2: str,
+    target: str,
+    ax: plt.Axes,
+    cmap: typing.Union[str, plt.Colormap],
+    text_color: typing.Any = None,
+    alpha: float | None = None,
+):
+    df = utils._truncate_df(df, plotting_config.scatter_plot_max_samples)
+    tri = Triangulation(df[f1], df[f2])
+    ax.tricontour(tri, df[target], levels=14, linewidths=0.5, colors="k")
+    ax.tricontourf(tri, df[target], levels=14, cmap=cmap)
+    ax.set_xlabel(f1)
+    ax.set_ylabel(f2)
+    ax.set_title(
+        f"'{f1} vs {f2}' Contour Plot (Target: {target})",
+        color=text_color,
+    )
+
+
+@utils.enrich_args_from_config(
+    "text_color",
+    "point_color",
+    "alpha",
+    config=plotting_config,
+)
+def _plot_categorical_scatter_with_regression(
+    # df: pd.DataFrame,
+    grouped: DataFrameGroupBy,
+    num_feature: str,
+    cat_feature: str,
+    target: str,
+    ax: plt.Axes,
+    cmap: typing.Union[str, plt.Colormap],
+    point_color: typing.Any = None,
+    text_color: typing.Any = None,
+    alpha: float | None = None,
+    confidence_interval: float | None = None,
+    bootstrap_max_iterations: int | None = None,
+    bootstrap_regression_sample_limit: int | None = None,
+    logy: bool = False,
+):
+    patches = []
+    grouped = sorted(grouped, key=lambda x: len(x[1]), reverse=True)
+
+    for i, (name, group) in enumerate(grouped):
+        color = cmap(i / len(grouped))
+        x, y = group[num_feature], group[target]
+        x_vals, y_vals, lower_ci, upper_ci, confidence_interval = (
+            linear_regression_with_ci(
+                x,
+                y,
+                confidence_interval=confidence_interval,
+                bootstrap_max_iterations=bootstrap_max_iterations,
+                bootstrap_regression_sample_limit=bootstrap_regression_sample_limit,
+                logy=logy,
+            )
+        )
+        ax.scatter(x, y, s=6, color=point_color, alpha=alpha)
+        ax.plot(x_vals, y_vals, color=color, linewidth=2)
+        ax.fill_between(
+            x_vals,
+            lower_ci,
+            upper_ci,
+            color=color,
+            alpha=0.2,
+            label=f"{int(confidence_interval*100)}% CI",
+        )
+        patches.append(Patch(color=color, label=name))
+
+    ax.legend(
+        handles=patches[: plotting_config.PATCH_LIMIT],
+        title=cat_feature,
+        loc="upper right",
+        fontsize="x-small",
+        title_fontsize="x-small",
+    )
+    ax.set_ylabel(f"{target}", color=text_color)
+    ax.set_title(
+        f"'{num_feature} vs {cat_feature}' Scatter Plot with Regression (CI: {confidence_interval * 100:.0f}%)",
+        color=text_color,
+    )
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+
+@utils.enrich_args_from_config(
+    "text_color",
+    "point_color",
+    "alpha",
+    config=plotting_config,
+)
+def _plot_categorical_scatter_with_lowess(
+    grouped: DataFrameGroupBy,
+    num_feature: str,
+    cat_feature: str,
+    target: str,
+    ax: plt.Axes,
+    cmap: typing.Union[str, plt.Colormap],
+    point_color: typing.Any = None,
+    text_color: typing.Any = None,
+    alpha: float | None = None,
+    lowess_frac: float | None = None,
+    lowess_kernel: typing.Literal["tricube", "gaussian"] | None = None,
+    lowess_regression_sample_limit: int | None = None,
+):
+    patches = []
+    grouped = sorted(grouped, key=lambda x: len(x[1]), reverse=True)
+
+    for i, (name, group) in enumerate(grouped):
+        color = cmap(i / len(grouped))
+        x, y = group[num_feature], group[target]
+        x_vals, y_vals, lowess_frac = linear_regression_with_lowess(
+            x,
+            y,
+            lowess_frac=lowess_frac,
+            lowess_kernel=lowess_kernel,
+            lowess_regression_sample_limit=lowess_regression_sample_limit,
+        )
+        ax.scatter(x, y, s=6, color=point_color, alpha=alpha)
+        ax.plot(
+            x_vals,
+            y_vals,
+            color=color,
+            linewidth=2,
+        )
+        patches.append(Patch(color=color, label=name))
+
+    ax.legend(
+        handles=patches[: plotting_config.PATCH_LIMIT],
+        title=cat_feature,
+        loc="upper right",
+        fontsize="x-small",
+        title_fontsize="x-small",
+    )
+    ax.set_ylabel(f"{target}", color=text_color)
+    ax.set_title(
+        f"'{num_feature} vs {cat_feature}' Scatter Plot with LOWESS (Fraction: {lowess_frac * 100:.0f}%)",
+        color=text_color,
+    )
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
+
+
+@utils.enrich_args_from_config(
+    "bins",
+    "point_color",
+    "text_color",
+    "alpha",
+    config=plotting_config,
+)
+def _plot_categorical_quantile_lineplot(
+    grouped: DataFrameGroupBy,
+    num_feature: str,
+    cat_feature: str,
+    target: str,
+    ax: plt.Axes,
+    cmap: typing.Union[str, plt.Colormap],
+    bins: int | None = None,
+    point_color: typing.Any = None,
+    text_color: typing.Any = None,
+    alpha: float | None = None,
+):
+    for i, (name, group) in enumerate(grouped):
+        pd.qcut()

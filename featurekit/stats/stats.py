@@ -21,12 +21,11 @@ from .config import stats_config
 def linear_regression_with_ci(
     x: pd.Series,
     y: pd.Series,
-    x_vals: np.ndarray | None = None,
     confidence_interval: float | None = None,
     bootstrap_max_iterations: int | None = None,
     bootstrap_regression_sample_limit: int | None = None,
     logy: bool = False,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, float]:
     y_transformed = None
 
     if logy:
@@ -36,11 +35,9 @@ def linear_regression_with_ci(
             )
         y_transformed = np.log(y + stats_config.EPS)
 
-    if x_vals is None:
-        x_vals = np.linspace(x.min(), x.max(), 100)
-
     y_target = y_transformed if y_transformed is not None else y
     ploy_fit = np.polynomial.Polynomial.fit(x=x, y=y_target, deg=1)
+    x_vals = np.linspace(x.min(), x.max(), 100)
     y_vals = ploy_fit(x_vals)
     resampled_preds = np.zeros((bootstrap_max_iterations, len(x_vals)))
 
@@ -70,7 +67,7 @@ def linear_regression_with_ci(
         resampled_preds, (1 + confidence_interval) * 100 / 2, axis=0
     )
 
-    return y_vals, lower_ci, upper_ci, confidence_interval
+    return x_vals, y_vals, lower_ci, upper_ci, confidence_interval
 
 
 def _tricube_weight_kernel(distances: np.ndarray) -> np.ndarray:
@@ -90,11 +87,10 @@ def _gaussian_weight_kernel(distances: np.ndarray) -> np.ndarray:
 def linear_regression_with_lowess(
     x: pd.Series,
     y: pd.Series,
-    x_vals: np.ndarray | None = None,
     lowess_frac: float | None = None,
     lowess_kernel: typing.Literal["tricube", "gaussian"] | None = None,
     lowess_regression_sample_limit: int | None = None,
-) -> tuple[np.ndarray, float]:
+) -> tuple[np.ndarray, np.ndarray, float]:
     if lowess_kernel not in ["tricube", "gaussian"]:
         raise ValueError(
             f"unknown weight kernel: '{lowess_kernel}', valid values: 'tricube', 'gaussian'"
@@ -115,7 +111,7 @@ def linear_regression_with_lowess(
         else _tricube_weight_kernel
     )
 
-    x_vals = x_vals if x_vals is not None else np.linspace(min(x), max(x), 100)
+    x_vals = np.linspace(min(x), max(x), 100)
     y_vals = np.zeros_like(x_vals)
 
     for i, x_v in enumerate(x_vals):
@@ -135,7 +131,7 @@ def linear_regression_with_lowess(
         )
         y_vals[i] = coeffs[0] + coeffs[1] * x_v
 
-    return y_vals, lowess_frac
+    return x_vals, y_vals, lowess_frac
 
 
 @utils.enrich_args_from_config("confidence_interval", config=stats_config)
@@ -156,7 +152,11 @@ def target_mean_with_ci(
 
     if sort_means:
         sorted_ids = np.argsort(target_means)[::-1]
-        return target_means.iloc[sorted_ids], target_mean_errs[sorted_ids], confidence_interval
+        return (
+            target_means.iloc[sorted_ids],
+            target_mean_errs[sorted_ids],
+            confidence_interval,
+        )
 
     return target_means, target_mean_errs, confidence_interval
 

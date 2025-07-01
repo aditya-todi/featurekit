@@ -2,6 +2,7 @@ import typing
 import functools
 
 import numpy as np
+import matplotlib.pyplot as plt
 
 import pandas as pd
 from pandas.core.groupby.generic import DataFrameGroupBy
@@ -9,19 +10,11 @@ from pandas.core.groupby.generic import DataFrameGroupBy
 from featurekit.config import fk_config
 
 
-def _is_regression(target_type: str) -> bool:
-    return target_type == "regression"
-
-
-def _is_classification(target_type: str) -> bool:
-    return target_type == "classification"
-
-
-def _drop_simultaneous_na(
-    x: pd.Series, y: pd.Series
-) -> typing.Tuple[pd.Series, pd.Series]:
-    na_idx = x.isna() | y.isna()
-    return x[~na_idx], y[~na_idx]
+def _truncate_df(df: pd.DataFrame, limit: int) -> pd.DataFrame:
+    if len(df) > limit:
+        ilocs = np.random.choice(len(df), limit, replace=False)
+        return df.iloc[ilocs]
+    return df
 
 
 def _truncate_simulatneous(
@@ -89,3 +82,30 @@ def enrich_args_from_config(
         return wrapper
 
     return decorator
+
+
+def _safe_get_axs(
+    axs: plt.Axes,
+    n: int,
+    m: int,
+    i: int | None = None,
+    j: int | None = None,
+) -> plt.Axes:
+    if i is None and j is None:
+        raise ValueError("either i or j is required, provided none")
+
+    if n == 1:
+        if j is None:
+            return axs
+        return axs[j]
+    if m == 1:
+        if i is None:
+            return axs
+        return axs[i]
+
+    if i is None:
+        return axs[j]
+    if j is None:
+        return axs[i]
+
+    return axs[i][j]

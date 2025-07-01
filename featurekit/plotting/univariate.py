@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 
 import featurekit.utils as utils
+from featurekit.types import TargetType
 from .config import plotting_config
 from .base_plots import (
     _plot_hist,
@@ -20,73 +21,29 @@ from .base_plots import (
     _plot_scatter_with_lowess,
     _plot_boxplot_categorical,
     _plot_violinplot_categorical,
-    _plot_mean_barplot_with_ci,
+    _plot_target_mean_with_ci,
     _plot_correspondence_categorical,
     _plot_contingency_heatmap,
 )
 
 
 class UnivariateFeaturePlotter(object):
-    """
-    UnivariateFeaturePlotter generates univariate exploratory data visualizations
-    for numerical and categorical features along with target
-
-    Attributes:
-    ----------
-    df : pd.DataFrame
-        The input dataset.
-    numerical_features : list[str]
-        List of numerical feature column names.
-    categorical_features : list[str]
-        List of categorical feature column names.
-    target : str
-        Name of the target column.
-    target_type : str
-        Type of problem: 'regression' or 'classification'.
-    """
-
     def __init__(
         self,
         df: pd.DataFrame,
         numerical_features: list[str] | None,
         categorical_features: list[str] | None,
         target: str,
-        target_type: str = "regression",
-        bins: int = 50,
+        target_type: TargetType,
     ) -> None:
-        """
-        Initializes the UnivariateFeaturePlotter.
-
-        Parameters:
-        ----------
-        df : pd.DataFrame
-            The input dataset.
-        numerical_features : list[str]
-            List of numerical feature column names.
-        categorical_features : list[str]
-            List of categorical feature column names.
-        target : str
-            Name of the target column.
-        target_type : str
-            Type of problem: 'regression' or 'classification'.
-        """
-        self.df = df.copy()
+        self.df = utils._truncate_df(df, plotting_config.max_samples).copy()
         self.numerical_features = numerical_features or []
         self.categorical_features = categorical_features or []
         self.target = target
         self.target_type = target_type.lower()
-        self.bins = bins
         self._validate_inputs()
 
     def _validate_inputs(self) -> None:
-        """
-        Validates that input column names exist in the DataFrame and target_type is valid.
-        """
-        if self.target_type not in ["regression", "classification"]:
-            raise ValueError(
-                f"target_type must be either 'regression' or 'classification', {self.target_type} was provided"
-            )
-
         all_columns = (
             self.numerical_features + self.categorical_features + [self.target]
         )
@@ -104,51 +61,41 @@ class UnivariateFeaturePlotter(object):
     ) -> None:
         x = self.df[feature].dropna()
         title = title or feature
-        _plot_hist(x, axs[0], bins=self.bins, bar_color=color, title=title)
+        _plot_hist(x, axs[0], bar_color=color, title=title)
         _plot_boxplot(x, axs[1], primary_color=color, title=title)
         _plot_violinplot(x, axs[2], title=title)
         _plot_qqplot(x, axs[3], title=title)
         _plot_ecdf(x, axs[4], title=feature)
 
     def plot_univariate_numeric(self) -> None:
-        """
-        Plots the following univariate distributions for numeric features:
-            1. Histogram and KDE
-            2. Box Plot
-            3. Violin Plot
-            4. ECDF (Empirical Cumulative Distribution Function) Plot
-            5. QQ Plot (Quantile-Quantile Plot)
-        """
         if not self.numerical_features:
             print("No numerical features to plot")
             return
 
         n = len(self.numerical_features)
-
         ncols = 5
-        nrows = n + (int(utils._is_regression(self.target_type)))
+        nrows = n + int(self.target_type == TargetType.REGRESSION)
         figsize = (20, 4 * nrows)
-        axs_start = 0
-
+        axs_start = int(self.target_type == TargetType.REGRESSION)
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
         )
 
-        if utils._is_regression(self.target_type):
+        if self.target_type == TargetType.REGRESSION:
             color = plt.colormaps[random.choice(plotting_config.cmaps)](random.random())
             title = f"Target: '{self.target}'"
             self._plot_single_numeric_feature(
                 self.target,
-                axs if nrows == 1 else axs[0],
+                utils._safe_get_axs(axs, nrows, ncols, i=0, j=None),
                 color=color,
                 title=title,
             )
-            axs_start += 1
-
         for i, feature in enumerate(self.numerical_features):
             color = plt.colormaps[random.choice(plotting_config.cmaps)](i / n)
             self._plot_single_numeric_feature(
-                feature, axs if nrows == 1 else axs[i + axs_start], color=color
+                feature,
+                utils._safe_get_axs(axs, nrows, ncols, i=i + axs_start, j=None),
+                color=color,
             )
 
         plt.show()
@@ -162,45 +109,38 @@ class UnivariateFeaturePlotter(object):
     ) -> None:
         title = title or feature
         counts = self.df[feature].fillna("Missing").value_counts()
-
         _plot_barh(counts=counts, ax=axs[0], cmap=cmap, title=title)
         _plot_donut(counts=counts, ax=axs[1], cmap=cmap, title=title)
 
     def plot_univariate_categorical(self) -> None:
-        """
-        Plots univariate distributions for each categorical feature in the dataset.
-
-        For each categorical feature, it generates two side-by-side visualizations:
-        1. A sorted horizontal bar plot showing the frequency of each category.
-        2. A donut chart (pie chart with a hollow center) displaying category proportions.
-        """
-
         if not self.categorical_features:
             print("No categorical features to plot")
             return
 
         n = len(self.categorical_features)
         ncols = 2
-        nrows = n + (int(utils._is_classification(self.target_type)))
+        nrows = n + int(self.target_type == TargetType.CLASSIFICATION)
         figsize = (20, 4 * nrows)
-        axs_start = 0
-
+        axs_start = int(self.target_type == TargetType.CLASSIFICATION)
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
         )
 
-        if utils._is_classification(self.target_type):
+        if self.target_type == TargetType.CLASSIFICATION:
             cmap = plt.colormaps[random.choice(plotting_config.cmaps)]
             title = f"Target: '{self.target}"
             self._plot_single_categorical_feature(
-                self.target, axs if nrows == 1 else axs[0], cmap=cmap, title=title
+                self.target,
+                utils._safe_get_axs(axs, nrows, ncols, i=0, j=None),
+                cmap=cmap,
+                title=title,
             )
-            axs_start += 1
-
         for i, feature in enumerate(self.categorical_features):
             cmap = plt.colormaps[random.choice(plotting_config.cmaps)]
             self._plot_single_categorical_feature(
-                feature, axs if nrows == 1 else axs[i + axs_start], cmap=cmap
+                feature,
+                utils._safe_get_axs(axs, nrows, ncols, i=i + axs_start, j=None),
+                cmap=cmap,
             )
 
         plt.show()
@@ -211,33 +151,15 @@ class UnivariateFeaturePlotter(object):
 
 
 class UnivariateTargetVariationPlotter(object):
-    """
-    UnivariateTargetVariationPlotter generates bivariate plots to visualize
-    how a numerical target variable varies with each individual feature.
-
-    Handles both numerical and categorical features.
-
-    Attributes:
-    ----------
-    df : pd.DataFrame
-        The input dataset.
-    numerical_features : list[str]
-        List of numerical feature column names.
-    categorical_features : list[str]
-        List of categorical feature column names.
-    target : str
-        Name of the numerical target column.
-    """
-
     def __init__(
         self,
         df: pd.DataFrame,
         numerical_features: list[str] | None,
         categorical_features: list[str] | None,
         target: str,
-        target_type: str = "regression",
+        target_type: TargetType,
     ) -> None:
-        self.df = df.copy()
+        self.df = utils._truncate_df(df, plotting_config.max_samples).copy()
         self.numerical_features = numerical_features or []
         self.categorical_features = categorical_features or []
         self.target = target
@@ -245,14 +167,6 @@ class UnivariateTargetVariationPlotter(object):
         self._validate_inputs()
 
     def _validate_inputs(self) -> None:
-        """
-        Validates that input column names exist in the DataFrame and target_type is valid.
-        """
-        if self.target_type not in ["regression", "classification"]:
-            raise ValueError(
-                f"target_type must be either 'regression' or 'classification', {self.target_type} was provided"
-            )
-
         all_columns = (
             self.numerical_features + self.categorical_features + [self.target]
         )
@@ -278,17 +192,18 @@ class UnivariateTargetVariationPlotter(object):
         ncols = 2
         nrows = n
         figsize = (20, 6 * nrows)
-
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
         )
 
         for i, feature in enumerate(self.numerical_features):
-            x, y = utils._drop_simultaneous_na(self.df[feature], self.df[self.target])
+            data = self.df[[feature, self.target]].dropna()
+            x, y = data[feature], data[self.target]
             _plot_scatter_with_regression(
                 x,
                 y,
-                axs[0] if nrows == 1 else axs[i][0],
+                # axs[0] if nrows == 1 else axs[i][0],
+                utils._safe_get_axs(axs, nrows, ncols, i, 0),
                 title=f"{feature} v/s {self.target}",
                 confidence_interval=confidence_interval,
                 bootstrap_max_iterations=bootstrap_max_iterations,
@@ -298,12 +213,13 @@ class UnivariateTargetVariationPlotter(object):
             _plot_scatter_with_lowess(
                 x,
                 y,
-                axs[1] if nrows == 1 else axs[i][1],
+                # axs[1] if nrows == 1 else axs[i][1],
+                utils._safe_get_axs(axs, nrows, ncols, i, 1),
                 title=f"{feature} v/s {self.target}",
                 lowess_frac=lowess_frac,
                 lowess_regression_sample_limit=lowess_regression_sample_limit,
             )
-            (axs[0] if nrows == 1 else axs[i][0]).set_ylabel(
+            utils._safe_get_axs(axs, nrows, ncols, 0, 0).set_ylabel(
                 f"{self.target}", color=plotting_config.text_color
             )
 
@@ -334,19 +250,22 @@ class UnivariateTargetVariationPlotter(object):
             _plot_boxplot_categorical(
                 grouped,
                 self.target,
-                axs[0] if nrows == 1 else axs[i][0],
+                # axs[0] if nrows == 1 else axs[i][0],
+                utils._safe_get_axs(axs, nrows, ncols, i, 0),
                 title=title,
             )
             _plot_violinplot_categorical(
                 grouped,
                 self.target,
-                axs[1] if nrows == 1 else axs[i][1],
+                # axs[1] if nrows == 1 else axs[i][1],
+                utils._safe_get_axs(axs, nrows, ncols, i, 1),
                 title=title,
             )
-            _plot_mean_barplot_with_ci(
+            _plot_target_mean_with_ci(
                 grouped,
                 self.target,
-                axs[2] if nrows == 1 else axs[i][2],
+                # axs[2] if nrows == 1 else axs[i][2],
+                utils._safe_get_axs(axs, nrows, ncols, i, 2),
                 title=title,
                 confidence_interval=confidence_interval,
             )
@@ -362,20 +281,6 @@ class UnivariateTargetVariationPlotter(object):
         lowess_regression_sample_limit: int | None = None,
         logy: bool = False,
     ) -> None:
-        """
-        Plots how each feature relates to the numerical target.
-
-        For each numerical feature, it generates following visualizations:
-        1. Scatter Plot with regression line and confidence interval around regression line
-        2. Scatter Plot with LOWESS smoother
-        3. Hexbin Plot (To be Implemented)
-        4. 2D KDE Plot (To be Implemented)
-
-        For each categorical feature, it generates following visualizations:
-        1. Box plots of target per category
-        2. Violin plots of target per category
-        3. Mean error bars with ci
-        """
         self._plot_numeric_target_numeric_feature_relationships(
             confidence_interval,
             bootstrap_max_iterations,
@@ -397,33 +302,35 @@ class UnivariateTargetVariationPlotter(object):
         ncols = 3
         nrows = n
         figsize = (20, 6 * nrows)
-        y = self.df[self.target]
+        # y = self.df[self.target]
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
         )
 
         for i, feature in enumerate(self.numerical_features):
-            x, y = utils._drop_simultaneous_na(self.df[feature], self.df[self.target])
-            grouped = self.df[[self.target, feature]].dropna().copy()
+            grouped = self.df[[self.target, feature]].dropna()
             # grouped[feature] = grouped[feature].fillna("Missing")
             grouped = grouped.groupby(self.target)
             title = f"{feature} v/s {self.target}"
             _plot_boxplot_categorical(
                 grouped,
                 feature,
-                axs[0] if nrows == 1 else axs[i][0],
+                # axs[0] if nrows == 1 else axs[i][0],
+                utils._safe_get_axs(axs, nrows, ncols, i, 0),
                 title=title,
             )
             _plot_violinplot_categorical(
                 grouped,
                 feature,
-                axs[1] if nrows == 1 else axs[i][1],
+                # axs[1] if nrows == 1 else axs[i][1],
+                utils._safe_get_axs(axs, nrows, ncols, i, 1),
                 title=title,
             )
-            _plot_mean_barplot_with_ci(
+            _plot_target_mean_with_ci(
                 grouped,
                 feature,
-                axs[2] if nrows == 1 else axs[i][2],
+                # axs[2] if nrows == 1 else axs[i][2],
+                utils._safe_get_axs(axs, nrows, ncols, i, 2),
                 title=title,
                 confidence_interval=confidence_interval,
             )
@@ -431,17 +338,21 @@ class UnivariateTargetVariationPlotter(object):
         plt.show()
 
     def _plot_categorical_target_categorical_feature_relationships(
-        self, random_state: int
+        self, random_state: int, confidence_interval: float | None = None
     ):
         if not self.categorical_features:
             print("No categorical features to plot")
             return
 
+        y = self.df[self.target]
+        plot_target_mean_with_ci = False
+        if y.nunique() == 2:
+            plot_target_mean_with_ci = True
+
         n = len(self.categorical_features)
-        ncols = 2
+        ncols = 2 + int(plot_target_mean_with_ci)
         nrows = n
         figsize = (16, 4 * nrows)
-        y = self.df[self.target]
         fig, axs = plt.subplots(
             nrows=nrows, ncols=ncols, figsize=figsize, layout="constrained"
         )
@@ -452,25 +363,35 @@ class UnivariateTargetVariationPlotter(object):
                 feature,
                 self.target,
                 fig,
-                axs[0] if nrows == 1 else axs[i][0],
+                # axs[0] if nrows == 1 else axs[i][0],
+                utils._safe_get_axs(axs, nrows, ncols, i, 0),
             )
             _plot_correspondence_categorical(
                 self.df,
                 feature,
                 self.target,
-                axs[1] if nrows == 1 else axs[i][1],
+                # axs[1] if nrows == 1 else axs[i][1],
+                utils._safe_get_axs(axs, nrows, ncols, i, 1),
                 random_state=random_state,
                 plot_names=True,
             )
+            if plot_target_mean_with_ci:
+                grouped = self.df[[self.target, feature]].dropna().groupby(feature)
+                title = f"{feature} v/s {self.target}"
+                _plot_target_mean_with_ci(
+                    grouped,
+                    self.target,
+                    # axs[2] if nrows == 1 else axs[i][2],
+                    utils._safe_get_axs(axs, nrows, ncols, i, 2),
+                    title=title,
+                    confidence_interval=confidence_interval,
+                )
 
         plt.show()
 
     def _plot_categorical_target_relationships(
         self, random_state: int, confidence_interval: float | None = None
     ) -> None:
-        """
-        Plots how each feature relates to the numerical target.
-        """
         self._plot_categorical_target_numerical_feature_relationships(
             confidence_interval
         )
@@ -478,7 +399,7 @@ class UnivariateTargetVariationPlotter(object):
 
     def plot(
         self,
-        random_state: int,
+        random_state: int | None = None,
         confidence_interval: float | None = None,
         bootstrap_max_iterations: int | None = None,
         bootstrap_regression_sample_limit: int | None = None,
@@ -486,10 +407,7 @@ class UnivariateTargetVariationPlotter(object):
         lowess_regression_sample_limit: int | None = None,
         logy: bool = False,
     ) -> None:
-        """
-        Wrapper method to plot bivariate visualizations based on target type.
-        """
-        if self.target_type == "regression":
+        if self.target_type == TargetType.REGRESSION:
             self._plot_numeric_target_relationships(
                 confidence_interval,
                 bootstrap_max_iterations,
@@ -498,7 +416,11 @@ class UnivariateTargetVariationPlotter(object):
                 lowess_regression_sample_limit,
                 logy,
             )
-        else:
+        elif self.target_type == TargetType.CLASSIFICATION:
+            if random_state is None:
+                raise ValueError("random_state is required for classification problems")
             self._plot_categorical_target_relationships(
                 random_state, confidence_interval
             )
+        else:
+            raise ValueError(f"Invalid target type: {self.target_type}")
